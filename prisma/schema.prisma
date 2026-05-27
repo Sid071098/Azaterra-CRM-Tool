@@ -1,0 +1,179 @@
+// Prisma schema for Azaterra CRM
+// SQLite for local dev. To deploy with shared backend:
+//   1. Change provider to "postgresql"
+//   2. Set DATABASE_URL to your Neon/Supabase/Vercel Postgres URL
+//   3. Run: npx prisma db push
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model IndiaMartLead {
+  id               String    @id @default(cuid())
+  uniqueQueryId    String    @unique
+  queryType        String?
+  queryTime        DateTime?
+  senderName       String?
+  senderMobile     String?
+  senderEmail      String?
+  senderCompany    String?
+  senderAddress    String?
+  senderCity       String?
+  senderState      String?
+  senderPincode    String?
+  senderCountryIso String?
+  senderMobileAlt  String?
+  senderEmailAlt   String?
+  productName      String?
+  message          String?
+  mcatName         String?
+  callDuration     String?
+  receiverMobile   String?
+  rawJson          String?
+  status           String    @default("New") // New | Imported | Ignored
+  importedAt       DateTime?
+  importedInquiryId String?
+  fetchedAt        DateTime  @default(now())
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model OwnerPin {
+  ownerId   String   @id
+  pinHash   String
+  pinSalt   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SalesPerson {
+  id        String    @id @default(cuid())
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  firstName String
+  lastName  String
+  email     String    @unique
+  status    String    @default("Active") // Active | Inactive
+  googleEmail String?
+  googleRefreshToken String?
+  googleConnectedAt DateTime?
+  inquiries Inquiry[]
+  sentEmails SentEmail[]
+}
+
+model Inquiry {
+  id              String   @id @default(cuid())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Sales rep relation (canonical ownership). `assignedTo` is kept as legacy free-text fallback.
+  salesPersonId   String?
+  salesPerson     SalesPerson? @relation(fields: [salesPersonId], references: [id], onDelete: SetNull)
+
+  // Contact
+  companyName     String
+  contactName     String
+  email           String?
+  phone           String?
+  country         String
+  city            String?
+
+  // Classification
+  customerType    String   // Farmer | Distributor | Manufacturer | Formulator | Other
+  source          String   // Website | Exhibition | Referral | Email | Phone | WhatsApp | Other
+
+  // Product interest
+  product         String   // Neem Oil (Cold Press) | Karanja/Pongamia Oil (Cold Press) | Custom Formulation | Other
+  productNotes    String?  // e.g. "min 1500ppm azadirachtin"
+  quantity        Float?
+  quantityUnit    String?  // L | Barrels | MT | KG
+  packaging       String?  // 50L HDPE | 200L HDPE | 200L MS | Custom
+
+  // Pipeline
+  stage           String   @default("New") // New | Contacted | SampleSent | OrderReceived | OrderStatus | OrderSent | Won | Lost
+  sampleDecision  String?  // SampleApproved | SampleNotRequired
+  expectedCloseAt DateTime?
+  estimatedValue  Float?
+  currency        String?  @default("USD")
+
+  // Sales
+  assignedTo      String?  // sales rep name (free text for v1)
+  nextActionAt    DateTime?
+  nextActionNote  String?
+  notes           String?
+  lastContactedAt DateTime?
+
+  // Regulatory (relevant for 35+ countries)
+  regulatoryNotes String?
+
+  // Payment tracking (mainly used once stage = Won)
+  paymentStatus         String?   // Pending | Received | NotReceived
+  paymentDueAt          DateTime?
+  paymentReceivedAt     DateTime?
+  lastPaymentReminderAt DateTime?
+
+  // Owner requests to sales reps
+  ownerFollowUpRequest String?
+  ownerRequestedChanges String?
+  ownerRequestStatus String? @default("Open") // Open | Handled
+  ownerRequestAt DateTime?
+
+  // Attribution & owner review
+  createdByName   String?  // e.g. "Priya" or "Owner" — free text in demo mode
+  createdByRole   String?  // "Owner" | "SalesRep"
+  reviewedAt      DateTime?
+  reviewedBy      String?  // owner name who marked it reviewed
+
+  // Historical retention. Archived inquiries are hidden from active dashboards
+  // but preserved for analysis and owner review.
+  isArchived      Boolean  @default(false)
+  deletedAt       DateTime?
+  deletedBy       String?
+
+  sentEmails      SentEmail[]
+  emailReplies    EmailReply[]
+}
+
+model SentEmail {
+  id             String   @id @default(cuid())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  inquiryId      String
+  inquiry        Inquiry  @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  salesPersonId  String?
+  salesPerson    SalesPerson? @relation(fields: [salesPersonId], references: [id], onDelete: SetNull)
+  ownerId        String?
+  actorRole      String
+  fromEmail      String
+  toEmail        String
+  subject        String
+  gmailMessageId String   @unique
+  gmailThreadId  String
+  sentAt         DateTime @default(now())
+  lastSyncedAt   DateTime?
+  replies        EmailReply[]
+}
+
+model EmailReply {
+  id             String   @id @default(cuid())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  inquiryId      String
+  inquiry        Inquiry  @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  sentEmailId    String
+  sentEmail      SentEmail @relation(fields: [sentEmailId], references: [id], onDelete: Cascade)
+  gmailMessageId String   @unique
+  gmailThreadId  String
+  fromEmail      String
+  fromName       String?
+  snippet        String?
+  receivedAt     DateTime
+  isHandled      Boolean  @default(false)
+  handledAt      DateTime?
+  handledBy      String?
+}
