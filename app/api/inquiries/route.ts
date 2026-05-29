@@ -4,6 +4,7 @@ import { readSession } from "@/lib/session";
 import { getMutationSession } from "@/lib/rbac";
 import { getPrimarySalesPersonId } from "@/lib/primaryRep";
 import { ensureInquiryArchiveColumns } from "@/lib/archiveSchema";
+import { sendNewLeadWhatsAppIfConfigured } from "@/lib/inquiryWhatsAppAutomation";
 
 export async function GET(req: NextRequest) {
   await ensureInquiryArchiveColumns();
@@ -86,6 +87,7 @@ export async function POST(req: NextRequest) {
       regulatoryNotes: body.regulatoryNotes || null,
     },
   });
+  await sendNewLeadWhatsAppIfConfigured(inquiry);
   return NextResponse.json(inquiry, { status: 201 });
 }
 

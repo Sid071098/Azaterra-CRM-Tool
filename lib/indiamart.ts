@@ -100,6 +100,117 @@ export function normalizeLead(raw: IndiaMartRawLead) {
   };
 }
 
+// Payload shape we expect from Mailparser.io / Zapier Email Parser.
+// All fields optional — keys are normalized (lowercased, snake_case) before lookup
+// so parsers can use natural names like "Buyer Name", "buyer_name", "BUYER_NAME".
+export type IndiaMartWebhookPayload = Record<string, unknown>;
+
+const FIELD_ALIASES: Record<keyof ReturnType<typeof emptyLead>, string[]> = {
+  uniqueQueryId: ["unique_query_id", "query_id", "lead_id", "id"],
+  queryType: ["query_type", "type"],
+  queryTime: ["query_time", "received_at", "date", "timestamp"],
+  senderName: ["sender_name", "buyer_name", "name", "from_name", "contact_name"],
+  senderMobile: ["sender_mobile", "buyer_mobile", "mobile", "phone", "contact_number"],
+  senderEmail: ["sender_email", "buyer_email", "email", "from_email"],
+  senderCompany: ["sender_company", "buyer_company", "company", "company_name", "firm_name"],
+  senderAddress: ["sender_address", "buyer_address", "address"],
+  senderCity: ["sender_city", "buyer_city", "city"],
+  senderState: ["sender_state", "buyer_state", "state"],
+  senderPincode: ["sender_pincode", "buyer_pincode", "pincode", "zip", "postal_code"],
+  senderCountryIso: ["sender_country_iso", "country_iso", "country"],
+  senderMobileAlt: ["sender_mobile_alt", "alt_mobile", "phone_alt"],
+  senderEmailAlt: ["sender_email_alt", "alt_email", "email_alt"],
+  productName: ["query_product_name", "product_name", "product", "subject"],
+  message: ["query_message", "message", "body", "enquiry_message"],
+  mcatName: ["query_mcat_name", "mcat_name", "category"],
+  callDuration: ["call_duration", "duration"],
+  receiverMobile: ["receiver_mobile", "to_mobile"],
+};
+
+function emptyLead() {
+  return {
+    uniqueQueryId: "" as string,
+    queryType: null as string | null,
+    queryTime: null as Date | null,
+    senderName: null as string | null,
+    senderMobile: null as string | null,
+    senderEmail: null as string | null,
+    senderCompany: null as string | null,
+    senderAddress: null as string | null,
+    senderCity: null as string | null,
+    senderState: null as string | null,
+    senderPincode: null as string | null,
+    senderCountryIso: null as string | null,
+    senderMobileAlt: null as string | null,
+    senderEmailAlt: null as string | null,
+    productName: null as string | null,
+    message: null as string | null,
+    mcatName: null as string | null,
+    callDuration: null as string | null,
+    receiverMobile: null as string | null,
+  };
+}
+
+function normalizeKey(k: string): string {
+  return k.trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+function pick(payload: Record<string, unknown>, aliases: string[]): string | null {
+  for (const a of aliases) {
+    const v = payload[a];
+    if (typeof v === "string" && v.trim()) return v.trim();
+    if (typeof v === "number") return String(v);
+  }
+  return null;
+}
+
+// Build a stable synthetic uniqueQueryId when the parser didn't extract one.
+// Hashes email|mobile|productName|date-bucket so the same email parsed twice dedupes.
+function syntheticId(parts: { email: string | null; mobile: string | null; product: string | null; when: Date | null }): string {
+  const dateBucket = (parts.when ?? new Date()).toISOString().slice(0, 13); // hour bucket
+  const seed = [parts.email ?? "", parts.mobile ?? "", parts.product ?? "", dateBucket].join("|").toLowerCase();
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) {
+    h = (h * 31 + seed.charCodeAt(i)) | 0;
+  }
+  return `EMAIL-${Math.abs(h).toString(36).toUpperCase()}-${dateBucket.replace(/[-:T]/g, "")}`;
+}
+
+// Map a Mailparser/Zapier payload to the same shape as normalizeLead.
+// Returns null only if we couldn't extract any useful contact info (no email AND no mobile).
+export function normalizeWebhookLead(payload: IndiaMartWebhookPayload) {
+  const lower: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(payload)) lower[normalizeKey(k)] = v;
+
+  const out = emptyLead();
+  for (const key of Object.keys(out) as Array<keyof ReturnType<typeof emptyLead>>) {
+    if (key === "queryTime") continue;
+    const val = pick(lower, FIELD_ALIASES[key]);
+    if (val !== null) (out[key] as string) = val;
+  }
+
+  const rawTime = pick(lower, FIELD_ALIASES.queryTime);
+  if (rawTime) {
+    const parsed = new Date(rawTime.replace(" ", "T"));
+    out.queryTime = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  } else {
+    out.queryTime = new Date();
+  }
+
+  if (!out.senderEmail && !out.senderMobile) return null;
+
+  if (!out.uniqueQueryId) {
+    out.uniqueQueryId = syntheticId({
+      email: out.senderEmail,
+      mobile: out.senderMobile,
+      product: out.productName,
+      when: out.queryTime,
+    });
+  }
+
+  return { ...out, rawJson: JSON.stringify(payload) };
+}
+
 export function sampleLeads(): IndiaMartRawLead[] {
   const now = new Date();
   const hoursAgo = (h: number) => {

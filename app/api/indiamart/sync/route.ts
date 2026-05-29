@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { readSession } from "@/lib/session";
 import { fetchIndiaMartLeads, normalizeLead, sampleLeads } from "@/lib/indiamart";
+import { sendIndiaMartLeadWhatsAppIfConfigured } from "@/lib/inquiryWhatsAppAutomation";
 
 const DEFAULT_LOOKBACK_DAYS = 7;
 
@@ -60,6 +61,8 @@ export async function POST(req: Request) {
 
   let inserted = 0;
   let updated = 0;
+  let whatsappSent = 0;
+  let whatsappFailed = 0;
   const skipped: string[] = [];
 
   for (const r of raw) {
@@ -78,8 +81,13 @@ export async function POST(req: Request) {
       });
       updated++;
     } else {
-      await prisma.indiaMartLead.create({ data: norm });
+      const lead = await prisma.indiaMartLead.create({ data: norm });
       inserted++;
+      const whatsapp = await sendIndiaMartLeadWhatsAppIfConfigured(lead);
+      if (whatsapp.attempted) {
+        if (whatsapp.ok) whatsappSent++;
+        else whatsappFailed++;
+      }
     }
   }
 
@@ -87,6 +95,8 @@ export async function POST(req: Request) {
     ok: true,
     inserted,
     updated,
+    whatsappSent,
+    whatsappFailed,
     skippedCount: skipped.length,
     usedSample: useSample,
     lookbackDays: useSample ? null : lookbackDays,
