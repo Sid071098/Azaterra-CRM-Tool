@@ -102,6 +102,33 @@ export async function DELETE(req: NextRequest) {
   }
 
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  if (body.deleteAllArchived === true) {
+    const archived = await prisma.inquiry.findMany({
+      where: { isArchived: true },
+      select: { id: true },
+    });
+    const archivedIds = archived.map((inquiry) => inquiry.id);
+    if (archivedIds.length === 0) {
+      return NextResponse.json({ ok: true, deletedCount: 0 });
+    }
+
+    const [, result] = await prisma.$transaction([
+      prisma.indiaMartLead.updateMany({
+        where: { importedInquiryId: { in: archivedIds } },
+        data: {
+          importedInquiryId: null,
+          importedAt: null,
+          status: "New",
+        },
+      }),
+      prisma.inquiry.deleteMany({
+        where: { id: { in: archivedIds }, isArchived: true },
+      }),
+    ]);
+
+    return NextResponse.json({ ok: true, deletedCount: result.count });
+  }
+
   const rawInquiryIds = body.inquiryIds;
   const inquiryIds: string[] = Array.isArray(rawInquiryIds)
     ? rawInquiryIds.filter((id): id is string => typeof id === "string" && id.length > 0)

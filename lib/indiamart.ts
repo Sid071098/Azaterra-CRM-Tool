@@ -1,130 +1,30 @@
-// IndiaMART Pull API integration.
-// Docs (premium): https://seller.indiamart.com/bltf/?prc=lmsapi
-// Endpoint shape used here matches the v2 CRM listing JSON.
-
-const API_ROOT = "https://mapi.indiamart.com/wservce/crm/crmListing/v2/";
-
-export type IndiaMartRawLead = {
-  UNIQUE_QUERY_ID?: string;
-  QUERY_TYPE?: string;
-  QUERY_TIME?: string;
-  SENDER_NAME?: string;
-  SENDER_MOBILE?: string;
-  SENDER_EMAIL?: string;
-  SENDER_COMPANY?: string;
-  SENDER_ADDRESS?: string;
-  SENDER_CITY?: string;
-  SENDER_STATE?: string;
-  SENDER_PINCODE?: string;
-  SENDER_COUNTRY_ISO?: string;
-  SENDER_MOBILE_ALT?: string;
-  SENDER_EMAIL_ALT?: string;
-  QUERY_PRODUCT_NAME?: string;
-  QUERY_MESSAGE?: string;
-  QUERY_MCAT_NAME?: string;
-  CALL_DURATION?: string;
-  RECEIVER_MOBILE?: string;
-  [k: string]: unknown;
-};
-
-export type IndiaMartResponse = {
-  CODE?: number;
-  STATUS?: string;
-  MESSAGE?: string;
-  TOTAL_RECORDS?: number;
-  RESPONSE?: IndiaMartRawLead[];
-};
-
-// Format Date as DD-Mon-YYYYHH:MM:SS (IndiaMART expected format).
-function formatDate(d: Date): string {
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const day = pad(d.getDate());
-  const month = months[d.getMonth()];
-  const year = d.getFullYear();
-  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  return `${day}-${month}-${year}${time}`;
-}
-
-export async function fetchIndiaMartLeads(opts: {
-  apiKey: string;
-  start: Date;
-  end: Date;
-}): Promise<IndiaMartResponse> {
-  const url = new URL(API_ROOT);
-  url.searchParams.set("glusr_crm_key", opts.apiKey);
-  url.searchParams.set("start_time", formatDate(opts.start));
-  url.searchParams.set("end_time", formatDate(opts.end));
-
-  const res = await fetch(url.toString(), {
-    method: "GET",
-    headers: { Accept: "application/json" },
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    throw new Error(`IndiaMART API returned ${res.status}`);
-  }
-  const data = (await res.json()) as IndiaMartResponse;
-  return data;
-}
-
-// Map a raw lead to the columns we store. Returns null if no UNIQUE_QUERY_ID.
-export function normalizeLead(raw: IndiaMartRawLead) {
-  if (!raw.UNIQUE_QUERY_ID) return null;
-  let queryTime: Date | null = null;
-  if (raw.QUERY_TIME) {
-    const parsed = new Date(raw.QUERY_TIME.replace(" ", "T"));
-    if (!Number.isNaN(parsed.getTime())) queryTime = parsed;
-  }
-  return {
-    uniqueQueryId: raw.UNIQUE_QUERY_ID,
-    queryType: raw.QUERY_TYPE ?? null,
-    queryTime,
-    senderName: raw.SENDER_NAME ?? null,
-    senderMobile: raw.SENDER_MOBILE ?? null,
-    senderEmail: raw.SENDER_EMAIL ?? null,
-    senderCompany: raw.SENDER_COMPANY ?? null,
-    senderAddress: raw.SENDER_ADDRESS ?? null,
-    senderCity: raw.SENDER_CITY ?? null,
-    senderState: raw.SENDER_STATE ?? null,
-    senderPincode: raw.SENDER_PINCODE ?? null,
-    senderCountryIso: raw.SENDER_COUNTRY_ISO ?? null,
-    senderMobileAlt: raw.SENDER_MOBILE_ALT ?? null,
-    senderEmailAlt: raw.SENDER_EMAIL_ALT ?? null,
-    productName: raw.QUERY_PRODUCT_NAME ?? null,
-    message: raw.QUERY_MESSAGE ?? null,
-    mcatName: raw.QUERY_MCAT_NAME ?? null,
-    callDuration: raw.CALL_DURATION ?? null,
-    receiverMobile: raw.RECEIVER_MOBILE ?? null,
-    rawJson: JSON.stringify(raw),
-  };
-}
-
-// Payload shape we expect from Mailparser.io / Zapier Email Parser.
-// All fields optional — keys are normalized (lowercased, snake_case) before lookup
+// Payload shape produced by the IndiaMART Gmail parser.
+// All fields optional; keys are normalized (lowercased, snake_case) before lookup
 // so parsers can use natural names like "Buyer Name", "buyer_name", "BUYER_NAME".
-export type IndiaMartWebhookPayload = Record<string, unknown>;
+import { cleanIndiaMartContactFields, normalizeIndiaState, splitContactAndCompany } from "@/lib/indiaContactCleanup";
+
+export type IndiaMartLeadPayload = Record<string, unknown>;
 
 const FIELD_ALIASES: Record<keyof ReturnType<typeof emptyLead>, string[]> = {
-  uniqueQueryId: ["unique_query_id", "query_id", "lead_id", "id"],
-  queryType: ["query_type", "type"],
-  queryTime: ["query_time", "received_at", "date", "timestamp"],
-  senderName: ["sender_name", "buyer_name", "name", "from_name", "contact_name"],
-  senderMobile: ["sender_mobile", "buyer_mobile", "mobile", "phone", "contact_number"],
-  senderEmail: ["sender_email", "buyer_email", "email", "from_email"],
-  senderCompany: ["sender_company", "buyer_company", "company", "company_name", "firm_name"],
-  senderAddress: ["sender_address", "buyer_address", "address"],
-  senderCity: ["sender_city", "buyer_city", "city"],
-  senderState: ["sender_state", "buyer_state", "state"],
-  senderPincode: ["sender_pincode", "buyer_pincode", "pincode", "zip", "postal_code"],
-  senderCountryIso: ["sender_country_iso", "country_iso", "country"],
-  senderMobileAlt: ["sender_mobile_alt", "alt_mobile", "phone_alt"],
-  senderEmailAlt: ["sender_email_alt", "alt_email", "email_alt"],
-  productName: ["query_product_name", "product_name", "product", "subject"],
-  message: ["query_message", "message", "body", "enquiry_message"],
-  mcatName: ["query_mcat_name", "mcat_name", "category"],
-  callDuration: ["call_duration", "duration"],
-  receiverMobile: ["receiver_mobile", "to_mobile"],
+  uniqueQueryId: ["unique_query_id", "uniquequeryid", "query_id", "queryid", "lead_id", "leadid", "id"],
+  queryType: ["query_type", "querytype", "type"],
+  queryTime: ["query_time", "querytime", "received_at", "receivedat", "date", "timestamp"],
+  senderName: ["sender_name", "sendername", "buyer_name", "buyername", "name", "from_name", "fromname", "contact_name", "contactname"],
+  senderMobile: ["sender_mobile", "sendermobile", "buyer_mobile", "buyermobile", "mobile", "phone", "contact_number", "contactnumber"],
+  senderEmail: ["sender_email", "senderemail", "buyer_email", "buyeremail", "email", "from_email", "fromemail"],
+  senderCompany: ["sender_company", "sendercompany", "buyer_company", "buyercompany", "company", "company_name", "companyname", "firm_name", "firmname"],
+  senderAddress: ["sender_address", "senderaddress", "buyer_address", "buyeraddress", "address"],
+  senderCity: ["sender_city", "sendercity", "buyer_city", "buyercity", "city"],
+  senderState: ["sender_state", "senderstate", "buyer_state", "buyerstate", "state"],
+  senderPincode: ["sender_pincode", "senderpincode", "buyer_pincode", "buyerpincode", "pincode", "pin_code", "zipcode", "zip", "postal_code", "postalcode"],
+  senderCountryIso: ["sender_country_iso", "sendercountryiso", "country_iso", "countryiso", "country"],
+  senderMobileAlt: ["sender_mobile_alt", "sendermobilealt", "alt_mobile", "altmobile", "phone_alt", "phonealt"],
+  senderEmailAlt: ["sender_email_alt", "senderemailalt", "alt_email", "altemail", "email_alt", "emailalt"],
+  productName: ["query_product_name", "queryproductname", "product_name", "productname", "product", "subject"],
+  message: ["query_message", "querymessage", "message", "body", "enquiry_message", "enquirymessage"],
+  mcatName: ["query_mcat_name", "querymcatname", "mcat_name", "mcatname", "category"],
+  callDuration: ["call_duration", "callduration", "duration"],
+  receiverMobile: ["receiver_mobile", "receivermobile", "to_mobile", "tomobile"],
 };
 
 function emptyLead() {
@@ -167,18 +67,23 @@ function pick(payload: Record<string, unknown>, aliases: string[]): string | nul
 // Build a stable synthetic uniqueQueryId when the parser didn't extract one.
 // Hashes email|mobile|productName|date-bucket so the same email parsed twice dedupes.
 function syntheticId(parts: { email: string | null; mobile: string | null; product: string | null; when: Date | null }): string {
-  const dateBucket = (parts.when ?? new Date()).toISOString().slice(0, 13); // hour bucket
-  const seed = [parts.email ?? "", parts.mobile ?? "", parts.product ?? "", dateBucket].join("|").toLowerCase();
+  const dateBucket = (parts.when ?? new Date()).toISOString().slice(0, 10); // day bucket
+  const seed = [
+    parts.email ?? "",
+    parts.mobile?.replace(/\D/g, "").slice(-10) ?? "",
+    parts.product ?? "",
+    dateBucket,
+  ].join("|").toLowerCase();
   let h = 0;
   for (let i = 0; i < seed.length; i++) {
     h = (h * 31 + seed.charCodeAt(i)) | 0;
   }
-  return `EMAIL-${Math.abs(h).toString(36).toUpperCase()}-${dateBucket.replace(/[-:T]/g, "")}`;
+  return `EMAIL-${Math.abs(h).toString(36).toUpperCase()}-${dateBucket.replace(/-/g, "")}`;
 }
 
-// Map a Mailparser/Zapier payload to the same shape as normalizeLead.
+// Map a parsed IndiaMART Gmail payload to the columns we store.
 // Returns null only if we couldn't extract any useful contact info (no email AND no mobile).
-export function normalizeWebhookLead(payload: IndiaMartWebhookPayload) {
+export function normalizeIndiaMartLeadPayload(payload: IndiaMartLeadPayload) {
   const lower: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(payload)) lower[normalizeKey(k)] = v;
 
@@ -197,6 +102,10 @@ export function normalizeWebhookLead(payload: IndiaMartWebhookPayload) {
     out.queryTime = new Date();
   }
 
+  applyRawEmailFallback(out, lower);
+
+  if (isInvalidIndiaMartBuyer(out, lower)) return null;
+
   if (!out.senderEmail && !out.senderMobile) return null;
 
   if (!out.uniqueQueryId) {
@@ -208,61 +117,353 @@ export function normalizeWebhookLead(payload: IndiaMartWebhookPayload) {
     });
   }
 
-  return { ...out, rawJson: JSON.stringify(payload) };
+  return { ...cleanParsedLead(out, lower), rawJson: JSON.stringify(payload) };
 }
 
-export function sampleLeads(): IndiaMartRawLead[] {
-  const now = new Date();
-  const hoursAgo = (h: number) => {
-    const d = new Date(now);
-    d.setHours(d.getHours() - h);
-    return d.toISOString().replace("T", " ").slice(0, 19);
+function applyRawEmailFallback(lead: ReturnType<typeof emptyLead>, payload: Record<string, unknown>) {
+  const rawText = readFirst(payload, [
+    "raw_email_text",  // key used by the Gmail parser
+    "body_plain",
+    "bodyplain",
+    "plain_body",
+    "plainbody",
+    "email_body",
+    "emailbody",
+    "raw_email",
+    "rawemail",
+    "text",
+    "content",
+    "body",
+    "message",
+  ]);
+  if (!rawText) return;
+
+  const subject = readFirst(payload, ["subject", "email_subject", "emailsubject"]) ?? "";
+  const parsed = parseIndiaMartEmailText(rawText, subject);
+
+  lead.senderEmail ??= parsed.email;
+  lead.senderMobile ??= parsed.mobile;
+  lead.senderName ??= parsed.name;
+  lead.senderAddress ??= parsed.address;
+  lead.senderCity ??= parsed.city;
+  lead.senderState ??= parsed.state;
+  lead.senderPincode ??= parsed.pincode;
+  lead.senderCountryIso ??= parsed.countryIso;
+  lead.productName ??= parsed.productName;
+  lead.message = buildFallbackMessage(lead.message, parsed);
+}
+
+function parseIndiaMartEmailText(rawText: string, subject: string) {
+  const text = rawText
+    .replace(/<https?:\/\/[^>]+>/g, "\n")
+    .replace(/https?:\/\/\S+/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/\r/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  const lines = text
+    .split(/\n/)
+    .map((line) => line.replace(/\s+/g, " ").replace(/^\s*[-=]+\s*$/, "").trim())
+    .filter((line) => !isIndiaMartCompanyLine(line))
+    .filter(Boolean);
+  const emailIndex = lines.findIndex((line) => /^e-?mail\s*:/i.test(line));
+  const email = extractEmail(emailIndex >= 0 ? lines[emailIndex] : lines.find((line) => extractEmail(line)) ?? "");
+  const mobile = extractPhone(lines.join(" "));
+  const parsedName = parseBuyerName(lines);
+  const location = parseLocation(lines, parsedName);
+  const address = parseAddressLine(lines, parsedName, location.raw);
+  const companyFromLocation = splitContactAndCompany(location.raw);
+  const name = parsedName ?? companyFromLocation?.contactName ?? null;
+  const quantity = readLabeledValue(lines, "Quantity");
+  const concentration = readLabeledValue(lines, "Concentration");
+  const packaging = readLabeledValue(lines, "Packaging Size");
+  const productForm = readLabeledValue(lines, "Product Form");
+  const grade = readLabeledValue(lines, "Grade");
+  const estimatedValueText = readLabeledValue(lines, "Probable Order Value");
+  const requirementType = readLabeledValue(lines, "Probable Requirement Type");
+
+  return {
+    email,
+    mobile,
+    name,
+    address: combineAddressParts(address, location.city, location.state, location.pincode),
+    city: location.city,
+    state: location.state,
+    pincode: location.pincode,
+    countryIso: location.pincode || location.state || mobile?.startsWith("+91") ? "IN" : null,
+    productName: parseProductName(subject, lines),
+    quantity,
+    concentration,
+    packaging,
+    productForm,
+    grade,
+    estimatedValueText,
+    requirementType,
   };
-  return [
-    {
-      UNIQUE_QUERY_ID: "DEMO-IM-001",
-      QUERY_TYPE: "W",
-      QUERY_TIME: hoursAgo(3),
-      SENDER_NAME: "Rakesh Sharma",
-      SENDER_MOBILE: "+91 98200 11122",
-      SENDER_EMAIL: "rakesh@bharatagrochem.in",
-      SENDER_COMPANY: "Bharat Agrochem Pvt Ltd",
-      SENDER_CITY: "Pune",
-      SENDER_STATE: "Maharashtra",
-      SENDER_COUNTRY_ISO: "IN",
-      QUERY_PRODUCT_NAME: "Cold Pressed Neem Oil 1500ppm",
-      QUERY_MESSAGE: "Looking for 500L sample for trial; min 1500ppm azadirachtin.",
-      QUERY_MCAT_NAME: "Neem Oil",
-    },
-    {
-      UNIQUE_QUERY_ID: "DEMO-IM-002",
-      QUERY_TYPE: "B",
-      QUERY_TIME: hoursAgo(11),
-      SENDER_NAME: "Ana Lopes",
-      SENDER_MOBILE: "+55 11 4002-8922",
-      SENDER_EMAIL: "ana.lopes@verdebio.com.br",
-      SENDER_COMPANY: "Verde Bio Insumos",
-      SENDER_CITY: "São Paulo",
-      SENDER_COUNTRY_ISO: "BR",
-      QUERY_PRODUCT_NAME: "Karanja Oil — 200L drums",
-      QUERY_MESSAGE: "Need quote for 10 MT Karanja oil, monthly shipments to Santos port.",
-      QUERY_MCAT_NAME: "Karanja Oil",
-    },
-    {
-      UNIQUE_QUERY_ID: "DEMO-IM-003",
-      QUERY_TYPE: "P",
-      QUERY_TIME: hoursAgo(29),
-      SENDER_NAME: "Tom Walker",
-      SENDER_MOBILE: "+1 415 555 0119",
-      SENDER_EMAIL: "tom@greenfields-us.com",
-      SENDER_COMPANY: "Greenfields Organics",
-      SENDER_CITY: "Davis",
-      SENDER_STATE: "California",
-      SENDER_COUNTRY_ISO: "US",
-      QUERY_PRODUCT_NAME: "Neem cake & oil bundle",
-      QUERY_MESSAGE: "Interested in OMRI-certified neem cake + oil for organic distribution.",
-      QUERY_MCAT_NAME: "Neem Cake",
-      CALL_DURATION: "00:04:11",
-    },
+}
+
+function parseBuyerName(lines: string[]) {
+  const phoneLineIndex = lines.findIndex((line) => /^phone\b/i.test(line) && /email/i.test(line));
+  const contactIndex = lines.findIndex((line) => /buyer'?s contact details/i.test(line));
+  const start = phoneLineIndex >= 0 ? phoneLineIndex + 1 : contactIndex >= 0 ? contactIndex + 1 : 0;
+  for (const line of lines.slice(start)) {
+    if (isEmailNoiseLine(line)) continue;
+    if (extractEmail(line) || extractPhone(line)) continue;
+    if (looksLikeLocationLine(line) || looksLikeCompanyLine(line)) continue;
+    if (/member since|buylead details|quantity|packaging|grade|probable/i.test(line)) break;
+    return stripStars(line);
+  }
+  return null;
+}
+
+function parseLocation(lines: string[], name: string | null) {
+  const buyerLines = lines.filter((line) => !isIndiaMartCompanyLine(line));
+  const candidates = buyerLines.filter((line) => {
+    if (!line || isEmailNoiseLine(line)) return false;
+    if (name && stripStars(line) === stripStars(name)) return false;
+    if (extractEmail(line) || extractPhone(line)) return false;
+    return /(?:\b[1-9]\d{5}\b|,\s*[A-Z]{2}\b|\s-\s*\d{4,6})/.test(line);
+  });
+  const raw = candidates[0] ?? "";
+  const pincode = raw.match(/\b[1-9]\d{5}\b/)?.[0] ?? null;
+  const state = raw.match(/,\s*([A-Z]{2})\b/)?.[1] ?? null;
+  const city =
+    stripStars(raw)
+      .replace(name ?? "", "")
+      .replace(/\b[1-9]\d{5}\b/g, "")
+      .replace(/,\s*[A-Z]{2}\b/g, "")
+      .replace(/\s-\s*$/g, "")
+      .split(/[,-]/)[0]
+      ?.trim() || null;
+  return { raw, city, state, pincode };
+}
+
+function parseAddressLine(lines: string[], name: string | null, location: string) {
+  const buyerLines = lines.filter((line) => !isIndiaMartCompanyLine(line));
+  const idx = buyerLines.findIndex((line) => line === location);
+  if (idx <= 0) return null;
+  const previous = stripStars(buyerLines[idx - 1]);
+  if (!previous || previous === name || isEmailNoiseLine(previous) || extractEmail(previous) || extractPhone(previous)) {
+    return null;
+  }
+  return previous;
+}
+
+function combineAddressParts(
+  address: string | null,
+  city: string | null,
+  state: string | null,
+  pincode: string | null,
+) {
+  const parts = [address, city, state, pincode]
+    .map((part) => stripStars(part ?? ""))
+    .filter(Boolean);
+  const unique: string[] = [];
+  for (const part of parts) {
+    const lower = part.toLowerCase();
+    if (unique.some((existing) => existing.toLowerCase() === lower || existing.toLowerCase().includes(lower))) {
+      continue;
+    }
+    unique.push(part);
+  }
+  return unique.join(", ") || null;
+}
+
+function parseProductName(subject: string, lines: string[]) {
+  const fromSubject = subject.match(/buyer details for\s+(.+)/i)?.[1]?.trim();
+  if (fromSubject) return stripStars(fromSubject);
+
+  const detailsIndex = lines.findIndex((line) => /buylead details/i.test(line));
+  if (detailsIndex >= 0) {
+    for (const line of lines.slice(detailsIndex + 1)) {
+      if (!line || isEmailNoiseLine(line)) continue;
+      if (/quantity|concentration|packaging|grade|probable/i.test(line)) break;
+      return stripStars(line);
+    }
+  }
+  return null;
+}
+
+function readLabeledValue(lines: string[], label: string) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  for (let index = 0; index < lines.length; index++) {
+    const cleaned = stripStars(lines[index]);
+    const match = cleaned.match(new RegExp(`^${escaped}\\s*:?\\s*(.+)$`, "i"));
+    if (match?.[1]) return stripStars(match[1]);
+    if (new RegExp(`^${escaped}\\s*:?$`, "i").test(cleaned)) {
+      const next = lines[index + 1] ? stripStars(lines[index + 1]) : null;
+      if (next && !isEmailNoiseLine(next)) return next;
+    }
+  }
+  return null;
+}
+
+function buildFallbackMessage(
+  existing: string | null,
+  parsed: ReturnType<typeof parseIndiaMartEmailText>,
+) {
+  if (existing?.trim() && !looksLikeRawEmail(existing)) return existing.trim();
+  const lines = [
+    parsed.productName ? `Product: ${parsed.productName}` : null,
+    parsed.quantity ? `Quantity: ${parsed.quantity}` : null,
+    parsed.concentration ? `Concentration: ${parsed.concentration}` : null,
+    parsed.packaging ? `Packaging Size: ${parsed.packaging}` : null,
+    parsed.productForm ? `Product Form: ${parsed.productForm}` : null,
+    parsed.grade ? `Grade: ${parsed.grade}` : null,
+    parsed.estimatedValueText ? `Probable Order Value: ${parsed.estimatedValueText}` : null,
+    parsed.requirementType ? `Probable Requirement Type: ${parsed.requirementType}` : null,
   ];
+  return lines.filter(Boolean).join("\n") || existing;
+}
+
+function looksLikeRawEmail(value: string) {
+  return /buyer'?s contact details|buylead details|reply to this message|indiamart/i.test(value);
+}
+
+function stripStars(value: string) {
+  return value.replace(/\*/g, "").replace(/\s+/g, " ").trim();
+}
+
+function isEmailNoiseLine(line: string) {
+  if (isIndiaMartCompanyLine(line)) return true;
+  return /^(from|date|subject|to):|forwarded message|buy lead through indiamart|buyer'?s contact details|reply to this message|indiamart recommends|call us|visit|dear user|contact name|company\s*\/\s*farm\s*\/\s*shop|this event isn'?t in your calendar yet$/i.test(
+    stripStars(line),
+  );
+}
+
+function isInvalidIndiaMartBuyer(lead: ReturnType<typeof emptyLead>, payload: Record<string, unknown>) {
+  const rawText = readFirst(payload, ["raw_email_text", "body_plain", "plain_body", "email_body", "raw_email", "text", "body", "message"]);
+  const subject = readFirst(payload, ["gmail_subject", "subject", "email_subject"]) ?? "";
+  const hay = `${subject} ${rawText ?? ""}`.toLowerCase();
+
+  if (lead.senderEmail && isIndiaMartInternalEmail(lead.senderEmail)) return true;
+  if (/this event isn'?t in your calendar yet|google calendar|calendar\.google\.com|invitation from google calendar/i.test(hay)) {
+    return true;
+  }
+  if (!/buy\s*lead\s+through\s+indiamart/i.test(hay)) return true;
+
+  const hasLeadSignal = Boolean(
+    lead.productName ||
+      lead.message ||
+      /buyer details|buyer'?s contact details|buylead details|buy\s*lead|requirement details|company\s*\/\s*farm\s*\/\s*shop|contact name|mobile|phone|quantity/i.test(hay),
+  );
+  return !hasLeadSignal;
+}
+
+function isIndiaMartInternalEmail(value: string) {
+  return /@(?:[\w.-]+\.)?indiamart\.com$/i.test(value.trim());
+}
+
+function isIndiaMartCompanyLine(line: string) {
+  const cleaned = stripStars(line).toLowerCase();
+  return /indiamart\s+intermesh|assotech\s+business\s+cresterra|plot\s*no\.?\s*22|sec(?:tor)?\s*135|noida\s*-?\s*201305/.test(
+    cleaned,
+  );
+}
+
+function looksLikeLocationLine(line: string) {
+  return /(?:\b[1-9]\d{5}\b|,\s*[A-Z]{2,3}\b|\s-\s*\d{4,6})/.test(stripStars(line));
+}
+
+function looksLikeCompanyLine(line: string) {
+  return /\b(?:pvt\.?\s*ltd\.?|private\s+limited|ltd\.?|llp|inc\.?|industries|enterprise|enterprises|traders|agro|organics|farm|farms|exports|imports|corporation|company|co\.?)\b/i.test(
+    stripStars(line),
+  );
+}
+
+function cleanParsedLead<T extends ReturnType<typeof emptyLead>>(lead: T, payload: Record<string, unknown>): T {
+  const email = extractEmail(lead.senderEmail);
+  const mobile = extractPhone(lead.senderMobile);
+  const contact = cleanIndiaMartContactFields({
+    companyName: lead.senderCompany,
+    contactName: lead.senderName,
+    address: lead.senderAddress,
+    city: lead.senderCity,
+    state: lead.senderState,
+    pincode: lead.senderPincode,
+  });
+  const quantity = cleanQuantity(readFirst(payload, ["quantity"]));
+  const unit = cleanUnit(readFirst(payload, ["quantity_unit", "quantityunit"]));
+  const concentration = cleanConcentration(readFirst(payload, ["concentration"]));
+  const productName = cleanProductName(lead.productName, concentration);
+  const message = buildMessage(lead.message, payload, { quantity, unit, concentration });
+
+  return {
+    ...lead,
+    senderEmail: email ?? lead.senderEmail,
+    senderMobile: mobile ?? lead.senderMobile,
+    senderName: contact.contactName ?? lead.senderName,
+    senderCompany: contact.companyName ?? lead.senderCompany,
+    senderAddress: contact.address ?? lead.senderAddress,
+    senderCity: contact.city ?? lead.senderCity,
+    senderState: contact.state ?? normalizeIndiaState(lead.senderState) ?? lead.senderState,
+    senderPincode: contact.pincode,
+    productName,
+    message,
+  };
+}
+
+function readFirst(payload: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number") return String(value);
+  }
+  return null;
+}
+
+function extractEmail(value: string | null) {
+  return value?.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] ?? null;
+}
+
+function extractPhone(value: string | null) {
+  const match = value?.match(/(?:\+?91[-\s]?)?[6-9]\d(?:[-\s]?\d){8}/);
+  if (!match) return null;
+  const digits = match[0].replace(/\D/g, "");
+  return digits.length === 10 ? `+91-${digits}` : `+${digits}`;
+}
+
+function cleanQuantity(value: string | null) {
+  return value?.match(/\d+(?:\.\d+)?/)?.[0] ?? null;
+}
+
+function cleanUnit(value: string | null) {
+  const unit = value?.match(/\b(litre|liter|l|kg|mt|tonne|ton|bags?)\b/i)?.[0];
+  return unit ?? null;
+}
+
+function cleanConcentration(value: string | null) {
+  if (!value) return null;
+  const cleaned = value.replace(/\*/g, "").trim();
+  return /(\d+\s*(ppm|%)|azadirachtin|concentration)/i.test(cleaned) ? cleaned : null;
+}
+
+function cleanProductName(productName: string | null, concentration: string | null) {
+  const value = productName?.replace(/\*/g, "").trim() ?? "";
+  if (value.length > 1) return value;
+  const maybeProduct = concentration?.toLowerCase().includes("cake") ? "Neem Cake Powder" : null;
+  return maybeProduct ?? productName;
+}
+
+function buildMessage(
+  existing: string | null,
+  payload: Record<string, unknown>,
+  cleaned: { quantity: string | null; unit: string | null; concentration: string | null },
+) {
+  if (existing?.trim()) return existing.trim();
+  const packaging = readFirst(payload, ["packaging"]);
+  const productForm = readFirst(payload, ["product_form", "productform"]);
+  const grade = readFirst(payload, ["grade"]);
+  const estimatedValue = readFirst(payload, ["estimated_value_text", "estimatedvaluetext"]);
+  const requirementType = readFirst(payload, ["probable_requirement_type", "probablerequirementtype", "requirement_type", "requirementtype"]);
+  const lines = [
+    cleaned.quantity ? `Quantity: ${[cleaned.quantity, cleaned.unit].filter(Boolean).join(" ")}` : null,
+    cleaned.concentration ? `Concentration: ${cleaned.concentration}` : null,
+    packaging ? `Packaging Size: ${packaging}` : null,
+    productForm ? `Product Form: ${productForm}` : null,
+    grade ? `Grade: ${grade}` : null,
+    estimatedValue ? `Probable Order Value: ${estimatedValue}` : null,
+    requirementType ? `Probable Requirement Type: ${requirementType}` : null,
+  ];
+  return lines.filter(Boolean).join("\n") || null;
 }

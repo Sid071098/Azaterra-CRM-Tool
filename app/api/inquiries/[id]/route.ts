@@ -207,7 +207,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   return NextResponse.json(inquiry);
 }
 
-export async function DELETE(_: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   await ensureInquiryArchiveColumns();
   const session = getMutationSession();
   if (!session) {
@@ -215,6 +215,35 @@ export async function DELETE(_: NextRequest, { params }: { params: { id: string 
       { error: "Only Sales Reps and Owners can delete inquiries." },
       { status: 403 },
     );
+  }
+
+  const permanent = req.nextUrl.searchParams.get("permanent") === "true";
+  if (permanent) {
+    const inquiry = await prisma.inquiry.findUnique({
+      where: { id: params.id },
+      select: { id: true, isArchived: true },
+    });
+    if (!inquiry) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (!inquiry.isArchived) {
+      return NextResponse.json(
+        { error: "Archive the inquiry before deleting it permanently." },
+        { status: 400 },
+      );
+    }
+
+    await prisma.$transaction([
+      prisma.indiaMartLead.updateMany({
+        where: { importedInquiryId: params.id },
+        data: {
+          importedInquiryId: null,
+          importedAt: null,
+          status: "New",
+        },
+      }),
+      prisma.inquiry.delete({ where: { id: params.id } }),
+    ]);
+
+    return NextResponse.json({ ok: true, deletedCount: 1 });
   }
 
   const [result] = await prisma.$transaction([

@@ -69,6 +69,16 @@ CRM Tool/
 - **Add a product** → append to `PRODUCTS` in `lib/options.ts`.
 - **Add a field to the inquiry** → add it to `prisma/schema.prisma`, run `npx prisma db push`, then expose it in `components/InquiryForm.tsx`.
 
+## IndiaMART Gmail lead capture
+
+The IndiaMART lead flow uses direct Gmail sync:
+
+- Sign in as the Owner and open **IndiaMART**.
+- Click **Connect Gmail** and connect `Azaterracrop@gmail.com`.
+- Click **Check Gmail**. This calls `POST /api/indiamart/gmail-sync`, searches Gmail with `INDIAMART_GMAIL_QUERY`, parses matching buyer emails, stores/dedupes the leads, and creates CRM inquiries.
+
+The Vercel cron at `/api/auth/sync-indiamart-gmail-cron` runs the direct Gmail pull for connected accounts. Set `CRON_SECRET` if you want to require a bearer token outside Vercel cron.
+
 ## Roadmap candidates (not in v1)
 
 - Auth + multi-rep login (NextAuth + Postgres)

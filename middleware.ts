@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { SESSION_COOKIE, parseSessionCookie } from "@/lib/sessionCookie";
 
-const PUBLIC_PATHS = ["/login", "/api/auth"];
+const PUBLIC_PATHS = ["/login", "/api/auth", "/api/indiamart/webhook"];
 
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;

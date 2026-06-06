@@ -21,7 +21,7 @@ import { readOrderStatusDetails } from "@/lib/orderStatusDetails";
 import { readOrderSentDetails } from "@/lib/orderSentDetails";
 import { readSampleDetails } from "@/lib/sampleDetails";
 
-type Inquiry = {
+export type PipelineInquiry = {
   id: string;
   companyName: string;
   contactName: string;
@@ -41,7 +41,16 @@ type Inquiry = {
   packaging: string | null;
 };
 
-export default function Pipeline({ inquiries }: { inquiries: Inquiry[] }) {
+export default function Pipeline({
+  inquiries,
+  emptyMessage = "No inquiries yet. Add one from the \"New Inquiry\" page.",
+  detailFrom = "pipeline",
+}: {
+  inquiries: PipelineInquiry[];
+  emptyMessage?: string;
+  detailFrom?: "pipeline" | "indiamart";
+}) {
+  const isIndiaMart = detailFrom === "indiamart";
   const stageOrder: Record<string, number> = STAGES.reduce(
     (acc, s, idx) => ({ ...acc, [s]: idx }),
     {},
@@ -66,9 +75,7 @@ export default function Pipeline({ inquiries }: { inquiries: Inquiry[] }) {
   const needle = query.trim().toLowerCase();
   const visible = sorted.filter((i) => {
     const matchesQuery = needle
-      ? [i.companyName, i.contactName, i.email, i.phone, i.product]
-          .filter(Boolean)
-          .some((v) => String(v).toLowerCase().includes(needle))
+      ? matchesPipelineSearch(i, needle)
       : true;
     const matchesStage = stageFilter ? i.stage === stageFilter : true;
     const matchesPayment =
@@ -158,8 +165,8 @@ export default function Pipeline({ inquiries }: { inquiries: Inquiry[] }) {
         <table className="min-w-full border-collapse text-sm">
           <thead className="bg-slate-100 text-left text-xs uppercase tracking-wide text-slate-700">
             <tr>
-              <Th>Company</Th>
-              <Th>Contact</Th>
+              <Th>{isIndiaMart ? "Buyer / company" : "Company"}</Th>
+              {isIndiaMart ? null : <Th>Contact</Th>}
               <Th>Sales Rep</Th>
               <Th>Stage</Th>
               <Th>Follow-Up</Th>
@@ -169,16 +176,14 @@ export default function Pipeline({ inquiries }: { inquiries: Inquiry[] }) {
             {visible.length === 0 ? (
               <tr>
                 <td
-                  colSpan={5}
+                  colSpan={isIndiaMart ? 4 : 5}
                   className="border-b border-slate-200 p-8 text-center text-sm text-slate-500"
                 >
-                  {sorted.length === 0
-                    ? "No inquiries yet. Add one from the \"New Inquiry\" page."
-                    : "No matches. Try a different search term."}
+                  {sorted.length === 0 ? emptyMessage : "No matches. Try a different search term."}
                 </td>
               </tr>
             ) : (
-              visible.map((i) => <Row key={i.id} inquiry={i} />)
+              visible.map((i) => <Row key={i.id} inquiry={i} detailFrom={detailFrom} />)
             )}
           </tbody>
         </table>
@@ -187,7 +192,27 @@ export default function Pipeline({ inquiries }: { inquiries: Inquiry[] }) {
   );
 }
 
-function Row({ inquiry }: { inquiry: Inquiry }) {
+function matchesPipelineSearch(inquiry: PipelineInquiry, needle: string) {
+  const hay = [
+    inquiry.companyName,
+    inquiry.contactName,
+    inquiry.email,
+    inquiry.phone,
+    inquiry.product,
+    inquiry.productNotes,
+    inquiry.quantity ? String(inquiry.quantity) : null,
+    inquiry.quantityUnit,
+    inquiry.packaging,
+    inquiry.notes,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const tokens = needle.split(/\s+/).filter(Boolean);
+  return tokens.length > 0 && tokens.every((token) => hay.includes(token));
+}
+
+function Row({ inquiry, detailFrom }: { inquiry: PipelineInquiry; detailFrom: "pipeline" | "indiamart" }) {
   const router = useRouter();
   const [stage, setStage] = useState(inquiry.stage);
   const [sampleDecision, setSampleDecision] = useState(inquiry.sampleDecision ?? "");
@@ -571,13 +596,13 @@ function Row({ inquiry }: { inquiry: Inquiry }) {
       <tr className="hover:bg-slate-50">
         <Td>
           <Link
-            href={`/inquiries/${inquiry.id}?from=pipeline`}
+            href={`/inquiries/${inquiry.id}?from=${detailFrom}`}
             className="font-medium text-brand-700 hover:underline"
           >
             {inquiry.companyName}
           </Link>
         </Td>
-        <Td className="text-slate-700">{inquiry.contactName || "—"}</Td>
+        {detailFrom === "indiamart" ? null : <Td className="text-slate-700">{inquiry.contactName || "—"}</Td>}
         <Td className="text-slate-700">{assignedRep || <span className="text-slate-400">Unassigned</span>}</Td>
         <Td>
           <select

@@ -18,7 +18,10 @@ type InquiryForWhatsApp = {
 };
 
 export async function sendNewLeadWhatsAppIfConfigured(inquiry: InquiryForWhatsApp) {
-  if (!isWhatsBoostConfigured()) return;
+  if (!isWhatsBoostConfigured()) return { attempted: false, ok: false, error: "WhatsBoost is not configured." };
+  if (hasAutomationNote(inquiry.notes, "WhatsApp auto-message sent")) {
+    return { attempted: false, ok: false, error: "WhatsApp auto-message was already sent." };
+  }
 
   const result = await sendAutomaticNewLeadWhatsApp(inquiry);
   const now = new Date();
@@ -35,7 +38,7 @@ export async function sendNewLeadWhatsAppIfConfigured(inquiry: InquiryForWhatsAp
         ),
       },
     });
-    return;
+    return { attempted: true, ...result };
   }
 
   await prisma.inquiry.update({
@@ -44,37 +47,14 @@ export async function sendNewLeadWhatsAppIfConfigured(inquiry: InquiryForWhatsAp
       notes: appendAutomationNote(inquiry.notes, `WhatsApp auto-message failed: ${result.error}`),
     },
   });
-}
-
-type IndiaMartLeadForWhatsApp = {
-  id?: string;
-  uniqueQueryId: string;
-  senderName: string | null;
-  senderMobile: string | null;
-  senderMobileAlt?: string | null;
-  senderCompany: string | null;
-  productName: string | null;
-  mcatName: string | null;
-  message: string | null;
-};
-
-export async function sendIndiaMartLeadWhatsAppIfConfigured(lead: IndiaMartLeadForWhatsApp) {
-  if (!isWhatsBoostConfigured()) return { attempted: false, ok: false, error: "WhatsBoost is not configured." };
-
-  const result = await sendAutomaticNewLeadWhatsApp({
-    id: lead.id ?? lead.uniqueQueryId,
-    companyName: lead.senderCompany || lead.senderName || "IndiaMART lead",
-    contactName: lead.senderName || "there",
-    phone: lead.senderMobile || lead.senderMobileAlt || null,
-    product: lead.productName || lead.mcatName || "your requirement",
-    productNotes: lead.message || lead.productName || null,
-    source: "IndiaMART",
-  });
-
   return { attempted: true, ...result };
 }
 
 function appendAutomationNote(existing: string | null | undefined, note: string) {
   const line = `[${new Date().toLocaleString("en-IN")}] ${note}`;
   return existing?.trim() ? `${existing.trim()}\n\n${line}` : line;
+}
+
+function hasAutomationNote(existing: string | null | undefined, marker: string) {
+  return Boolean(existing?.toLowerCase().includes(marker.toLowerCase()));
 }

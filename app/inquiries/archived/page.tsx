@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import InquiriesTable from "@/components/InquiriesTable";
+import ArchivedDeleteAllButton from "@/components/ArchivedDeleteAllButton";
 import { readSession } from "@/lib/session";
 import { ensureInquiryArchiveColumns } from "@/lib/archiveSchema";
 
@@ -13,6 +14,7 @@ export default async function ArchivedInquiriesPage({
   await ensureInquiryArchiveColumns();
   const session = readSession();
   const readOnly = session?.role === "Owner";
+  const canDelete = session?.role === "Owner" || session?.role === "SalesRep";
 
   const where: Record<string, unknown> = { isArchived: true };
   if (searchParams.stage) where.stage = searchParams.stage;
@@ -43,10 +45,15 @@ export default async function ArchivedInquiriesPage({
 
   return (
     <div>
-      <h1 className="mb-1 text-2xl font-semibold text-brand-900">Archived Leads</h1>
-      <p className="mb-4 text-sm text-slate-600">
-        {inquiries.length} archived records preserved for review and analysis
-      </p>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="mb-1 text-2xl font-semibold text-brand-900">Archived Leads</h1>
+          <p className="text-sm text-slate-600">
+            {inquiries.length} archived records preserved for review and analysis. Delete removes them completely.
+          </p>
+        </div>
+        {canDelete ? <ArchivedDeleteAllButton count={inquiries.length} /> : null}
+      </div>
       <InquiriesTable
         inquiries={inquiries.map((i) => ({
           ...i,
@@ -57,7 +64,7 @@ export default async function ArchivedInquiriesPage({
         team={team.map((p) => ({ id: p.id, name: `${p.firstName} ${p.lastName}` }))}
         current={searchParams}
         readOnly={readOnly}
-        canDelete={false}
+        canDelete={canDelete}
         archivedView
       />
     </div>

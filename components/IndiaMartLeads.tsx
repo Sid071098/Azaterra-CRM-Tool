@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { RefreshCw, FlaskConical, ArrowRight, Trash2, Ban, CheckCircle2 } from "lucide-react";
+import { ArrowRight, Trash2, Ban, CheckCircle2, MailSearch, Mail } from "lucide-react";
 
 type Lead = {
   id: string;
@@ -16,6 +16,7 @@ type Lead = {
   senderCompany: string | null;
   senderCity: string | null;
   senderState: string | null;
+  senderPincode: string | null;
   senderCountryIso: string | null;
   productName: string | null;
   message: string | null;
@@ -31,19 +32,28 @@ const QUERY_TYPE_LABEL: Record<string, string> = {
   P: "Phone",
 };
 
+type SyncWindow = "today" | "week" | "all";
+
+const SYNC_WINDOW_LABELS: Record<SyncWindow, string> = {
+  today: "Today's leads",
+  week: "Last 7 days",
+  all: "All Gmail leads",
+};
+
 export default function IndiaMartLeads({
   initialLeads,
-  hasApiKey,
+  connectedGmail,
 }: {
   initialLeads: Lead[];
-  hasApiKey: boolean;
+  connectedGmail: string | null;
 }) {
   const router = useRouter();
-  const [busy, setBusy] = useState<"sync" | "sample" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<"all" | "New" | "Imported" | "Ignored">("New");
   const [q, setQ] = useState("");
+  const [syncingGmail, setSyncingGmail] = useState(false);
+  const [syncWindow, setSyncWindow] = useState<SyncWindow>("week");
 
   const filtered = useMemo(() => {
     return initialLeads.filter((l) => {
@@ -68,29 +78,6 @@ export default function IndiaMartLeads({
       return true;
     });
   }, [initialLeads, statusFilter, q]);
-
-  async function callSync(useSample: boolean) {
-    setError(null);
-    setInfo(null);
-    setBusy(useSample ? "sample" : "sync");
-    try {
-      const res = await fetch("/api/indiamart/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ useSample, lookbackDays: 7 }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Sync failed");
-      setInfo(
-        `${useSample ? "Demo data loaded" : "Synced from IndiaMART"} — ${data.inserted} new, ${data.updated} updated.`,
-      );
-      router.refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Sync failed");
-    } finally {
-      setBusy(null);
-    }
-  }
 
   async function importLead(id: string) {
     setError(null);
@@ -134,40 +121,44 @@ export default function IndiaMartLeads({
     }
   }
 
+  async function syncFromGmail() {
+    setError(null);
+    setInfo(null);
+    setSyncingGmail(true);
+    try {
+      const res = await fetch("/api/indiamart/gmail-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ syncWindow }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Gmail sync failed");
+      const newLeads: number = data.inserted ?? 0;
+      const updatedLeads: number = data.updated ?? 0;
+      const inquiriesCreated: number = data.inquiriesCreated ?? 0;
+      const checked: number = data.checked ?? 0;
+      const nonLeads: number = data.filtered ?? 0;
+      const rangeLabel = SYNC_WINDOW_LABELS[(data.syncWindow as SyncWindow) ?? syncWindow].toLowerCase();
+      if (newLeads === 0 && updatedLeads === 0) {
+        setInfo(`No new leads found (${rangeLabel}). ${checked} emails scanned, ${nonLeads} non-IndiaMART filtered out.`);
+      } else {
+        const parts = [
+          newLeads > 0 ? `${newLeads} new lead${newLeads === 1 ? "" : "s"} added` : null,
+          updatedLeads > 0 ? `${updatedLeads} refreshed` : null,
+          inquiriesCreated > 0 ? `${inquiriesCreated} ${inquiriesCreated === 1 ? "inquiry" : "inquiries"} created automatically` : null,
+        ].filter(Boolean);
+        setInfo(`${parts.join(", ")} (${rangeLabel} · ${checked} emails scanned)`);
+      }
+      setTimeout(() => router.refresh(), 1200);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Gmail sync failed");
+    } finally {
+      setSyncingGmail(false);
+    }
+  }
+
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          className="btn-primary"
-          disabled={busy !== null}
-          onClick={() => callSync(false)}
-        >
-          <RefreshCw className={`mr-2 h-4 w-4 ${busy === "sync" ? "animate-spin" : ""}`} />
-          {busy === "sync" ? "Syncing…" : "Sync from IndiaMART"}
-        </button>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-          disabled={busy !== null}
-          onClick={() => callSync(true)}
-        >
-          <FlaskConical className={`h-4 w-4 ${busy === "sample" ? "animate-pulse" : ""}`} />
-          {busy === "sample" ? "Loading…" : "Load demo data"}
-        </button>
-        <div className="ml-auto flex items-center gap-2 text-xs text-slate-600">
-          <span
-            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${
-              hasApiKey
-                ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-                : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
-            }`}
-          >
-            {hasApiKey ? "API key configured" : "INDIAMART_API_KEY not set"}
-          </span>
-        </div>
-      </div>
-
       {error ? (
         <p className="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
           {error}
@@ -178,6 +169,15 @@ export default function IndiaMartLeads({
           {info}
         </p>
       ) : null}
+      <div className="mb-3 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+        {connectedGmail ? (
+          <span>
+            Gmail source connected: <strong>{connectedGmail}</strong>
+          </span>
+        ) : (
+          <span>Connect Azaterracrop@gmail.com once, then use Check Gmail to import IndiaMART leads.</span>
+        )}
+      </div>
 
       <div className="mb-3 flex flex-wrap items-end gap-3">
         <div>
@@ -202,6 +202,35 @@ export default function IndiaMartLeads({
             <option value="Ignored">Ignored</option>
           </select>
         </div>
+        <div>
+          <label className="label">Fetch from Gmail</label>
+          <select
+            className="select min-w-[170px]"
+            value={syncWindow}
+            onChange={(e) => setSyncWindow(e.target.value as SyncWindow)}
+          >
+            <option value="today">Today&apos;s leads</option>
+            <option value="week">Last 7 days</option>
+            <option value="all">All Gmail leads</option>
+          </select>
+        </div>
+        <button
+          type="button"
+          className="inline-flex items-center gap-2 rounded border border-brand-200 bg-white px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={syncFromGmail}
+          disabled={syncingGmail || !connectedGmail}
+          title={connectedGmail ? `Search connected Gmail for ${SYNC_WINDOW_LABELS[syncWindow].toLowerCase()}` : "Connect Gmail before checking for IndiaMART leads"}
+        >
+          <MailSearch className="h-4 w-4" />
+          {syncingGmail ? "Checking Gmail..." : "Fetch Leads"}
+        </button>
+        <Link
+          href="/api/email/google/connect?next=/indiamart"
+          className="inline-flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        >
+          <Mail className="h-4 w-4" />
+          {connectedGmail ? "Reconnect Gmail" : "Connect Gmail"}
+        </Link>
       </div>
 
       <div className="overflow-x-auto border border-slate-300 bg-white">
@@ -209,12 +238,12 @@ export default function IndiaMartLeads({
           <thead className="bg-slate-100 text-left text-xs uppercase tracking-wide text-slate-700">
             <tr>
               <Th>When</Th>
-              <Th>Type</Th>
               <Th>Contact</Th>
-              <Th>Company</Th>
+              <Th>Company / Farm / Shop</Th>
+              <Th>Email</Th>
+              <Th>Phone</Th>
               <Th>Location</Th>
-              <Th>Product</Th>
-              <Th>Message</Th>
+              <Th>Product / Qty</Th>
               <Th>Status</Th>
               <Th>Actions</Th>
             </tr>
@@ -226,8 +255,7 @@ export default function IndiaMartLeads({
                   colSpan={9}
                   className="border-b border-slate-200 p-8 text-center text-sm text-slate-500"
                 >
-                  No IndiaMART leads yet. Click <b>Load demo data</b> to preview, or{" "}
-                  <b>Sync from IndiaMART</b> once your API key is set in <code>.env</code>.
+                  No IndiaMART buyer leads yet. Connect Azaterracrop@gmail.com, choose a Gmail range, and use Fetch Leads.
                 </td>
               </tr>
             ) : (
@@ -237,24 +265,22 @@ export default function IndiaMartLeads({
                     {l.queryTime ? new Date(l.queryTime).toLocaleString() : "—"}
                   </Td>
                   <Td>
-                    <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] text-slate-700">
-                      {(l.queryType && QUERY_TYPE_LABEL[l.queryType]) || l.queryType || "—"}
-                    </span>
+                    <div className="font-medium text-brand-900">{l.senderName || "Unknown"}</div>
+                    <div className="mt-1">
+                      <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] text-slate-700">
+                        {(l.queryType && QUERY_TYPE_LABEL[l.queryType]) || l.queryType || "Lead"}
+                      </span>
+                    </div>
                   </Td>
-                  <Td>
-                    <div className="font-medium text-brand-900">{l.senderName || "—"}</div>
-                    <div className="text-xs text-slate-500">{l.senderEmail || ""}</div>
-                    <div className="text-xs text-slate-500">{l.senderMobile || ""}</div>
-                  </Td>
-                  <Td>{l.senderCompany || "—"}</Td>
+                  <Td className="font-medium text-slate-800">{l.senderCompany || "—"}</Td>
+                  <Td className="text-xs text-slate-600">{l.senderEmail || "—"}</Td>
+                  <Td className="whitespace-nowrap text-xs text-slate-600">{l.senderMobile || "—"}</Td>
                   <Td className="text-xs text-slate-600">
-                    {[l.senderCity, l.senderState, l.senderCountryIso].filter(Boolean).join(", ") || "—"}
+                    {[l.senderCity, l.senderState, l.senderPincode].filter(Boolean).join(", ") || "—"}
                   </Td>
-                  <Td className="max-w-[200px]">
+                  <Td className="max-w-[240px]">
                     <div className="text-sm">{l.productName || l.mcatName || "—"}</div>
-                  </Td>
-                  <Td className="max-w-[280px] text-xs text-slate-600">
-                    <div className="line-clamp-3">{l.message || "—"}</div>
+                    <div className="mt-1 line-clamp-2 text-xs text-slate-500">{l.message || ""}</div>
                   </Td>
                   <Td>
                     <StatusPill status={l.status} />

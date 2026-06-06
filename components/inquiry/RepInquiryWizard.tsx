@@ -85,6 +85,7 @@ const QUICK_DATES = [
 ];
 
 const INDIA_LOCATION_API = "/api/locations";
+const MANUAL_CITY_ID = "__manual_city__";
 
 type IndiaState = { id: number; name: string; code?: string };
 type IndiaDistrict = { id: number; name: string; state_id: number };
@@ -149,7 +150,7 @@ export default function RepInquiryWizard({
         setStateOptions(options);
       })
       .catch(() => {
-        if (!cancelled) setLocationError("Could not load the full India location list. Using the built-in fallback list.");
+        if (!cancelled) setLocationError("Could not load the India location list. You can still enter the address details manually.");
       })
       .finally(() => {
         if (!cancelled) setLocationLoading((current) => ({ ...current, states: false }));
@@ -198,6 +199,7 @@ export default function RepInquiryWizard({
     const query = new URLSearchParams({
       district_id: state.district_id,
       district_name: state.district_name,
+      state_name: state.state_name,
     });
     fetch(`${INDIA_LOCATION_API}/talukas?${query.toString()}`)
       .then((res) => res.json())
@@ -233,6 +235,7 @@ export default function RepInquiryWizard({
     state.state_id.length > 0 &&
     state.district_id.length > 0 &&
     state.city_town_id.length > 0 &&
+    state.city_town_name.trim().length > 0 &&
     state.street_address.trim().length > 0;
   const customerOk = namesOk && phoneRequiredOk && emailOk && otherOk && addressOk;
   const productOk = state.product_name.length > 0;
@@ -587,7 +590,7 @@ export default function RepInquiryWizard({
                       const option = cityTownOptions.find((item) => String(item.id) === e.target.value);
                       patch({
                         city_town_id: e.target.value,
-                        city_town_name: option?.name ?? "",
+                        city_town_name: e.target.value === MANUAL_CITY_ID ? "" : option?.name ?? "",
                       });
                     }}
                   >
@@ -599,10 +602,19 @@ export default function RepInquiryWizard({
                         {option.name}
                       </option>
                     ))}
+                    <option value={MANUAL_CITY_ID}>Not listed / enter manually</option>
                     {!locationLoading.cityTowns && state.district_id && cityTownOptions.length === 0 ? (
                       <option value="" disabled>No city/town options available</option>
                     ) : null}
                   </select>
+                  {state.city_town_id === MANUAL_CITY_ID ? (
+                    <input
+                      className="mt-2 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
+                      placeholder="Enter city, town, taluka, or village"
+                      value={state.city_town_name}
+                      onChange={(e) => patch({ city_town_name: e.target.value })}
+                    />
+                  ) : null}
                 </Field>
               </div>
 
@@ -619,7 +631,7 @@ export default function RepInquiryWizard({
                 <p className="mt-2 text-xs text-amber-700">{locationError}</p>
               ) : (
                 <p className="mt-2 text-xs text-slate-500">
-                  District and city/town options load after selecting the previous level.
+                  District and city/town options load after selecting the previous level. Use manual entry if a place is not listed.
                 </p>
               )}
             </div>

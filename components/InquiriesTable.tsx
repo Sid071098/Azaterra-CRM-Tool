@@ -15,7 +15,9 @@ import { readOrderStatusDetails } from "@/lib/orderStatusDetails";
 import { readOrderSentDetails } from "@/lib/orderSentDetails";
 import { readPaymentDetails } from "@/lib/paymentDetails";
 import { readSampleDetails } from "@/lib/sampleDetails";
-import { Archive, RotateCcw, Pencil, UserPlus, X } from "lucide-react";
+import { cleanIndiaMartContactFields } from "@/lib/indiaContactCleanup";
+import { readIndiaMartOrderDetails } from "@/lib/indiaMartOrderDetails";
+import { Archive, RotateCcw, Pencil, Trash2, UserPlus, X } from "lucide-react";
 
 type Inquiry = {
   id: string;
@@ -25,6 +27,7 @@ type Inquiry = {
   country: string;
   city: string | null;
   customerType: string;
+  source: string;
   product: string;
   productNotes: string | null;
   quantity: number | null;
@@ -137,6 +140,20 @@ export default function InquiriesTable({
     if (!res.ok) {
       const data = await res.json().catch(() => null);
       alert(data?.error ?? "Could not restore inquiry.");
+      return;
+    }
+    router.refresh();
+  }
+
+  async function permanentlyDeleteInquiry(id: string) {
+    if (!confirm("Permanently delete this archived lead? This removes it from CRM storage completely.")) return;
+
+    const res = await fetch(`/api/inquiries/${id}?permanent=true`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      alert(data?.error ?? "Could not permanently delete inquiry.");
       return;
     }
     router.refresh();
@@ -263,75 +280,90 @@ export default function InquiriesTable({
                 </td>
               </tr>
             ) : (
-              inquiries.map((i) => (
-                <tr key={i.id} className="hover:bg-slate-50">
-                  {!archivedView ? (
-                    <Td className="border-r border-slate-200">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 rounded border-slate-300 text-brand-700"
-                        checked={selectedIds.includes(i.id)}
-                        onChange={(e) => toggleOne(i.id, e.target.checked)}
-                        aria-label={`Select inquiry for ${i.companyName}`}
-                      />
-                    </Td>
-                  ) : null}
-                  <Td>
-                    <button
-                      type="button"
-                      className="text-left font-medium text-brand-700 hover:underline"
-                      onClick={() => setViewingInquiry(i)}
-                    >
-                      {i.companyName}
-                    </button>
-                  </Td>
-                  <Td>{i.contactName}</Td>
-                  <Td>{i.country}</Td>
-                  <Td className="text-slate-600">{i.customerType}</Td>
-                  <Td className="text-slate-600">{i.product}</Td>
-                  <Td className="text-slate-600">
-                    {i.quantity ? `${i.quantity} ${i.quantityUnit ?? ""}` : "—"}
-                  </Td>
-                  <Td>
-                    <RepCell
-                      inquiry={i}
-                      team={team}
-                      readOnly={readOnly}
-                      open={openId === i.id}
-                      onToggle={() => setOpenId((cur) => (cur === i.id ? null : i.id))}
-                      onAssign={(spId) => assignRep(i.id, spId)}
-                    />
-                  </Td>
-                  <Td>
-                    <span
-                      className={`inline-block rounded border px-1.5 py-0.5 text-[11px] font-medium ${STAGE_COLORS[i.stage]}`}
-                    >
-                      {STAGE_LABELS[i.stage] ?? i.stage}
-                    </span>
-                  </Td>
-                  {archivedView ? (
-                    <Td className="text-xs text-slate-500">
-                      {i.deletedAt ? new Date(i.deletedAt).toLocaleDateString() : "—"}
-                      {i.deletedBy ? <span className="block">by {i.deletedBy}</span> : null}
-                    </Td>
-                  ) : null}
-                  <Td className="text-xs text-slate-500">
-                    {new Date(i.createdAt).toLocaleDateString()}
-                  </Td>
-                  {archivedView ? (
+              inquiries.map((i) => {
+                const displayContact = getDisplayContact(i);
+                return (
+                  <tr key={i.id} className="hover:bg-slate-50">
+                    {!archivedView ? (
+                      <Td className="border-r border-slate-200">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-slate-300 text-brand-700"
+                          checked={selectedIds.includes(i.id)}
+                          onChange={(e) => toggleOne(i.id, e.target.checked)}
+                          aria-label={`Select inquiry for ${displayContact.companyName}`}
+                        />
+                      </Td>
+                    ) : null}
                     <Td>
                       <button
                         type="button"
-                        className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
-                        onClick={() => restoreInquiry(i.id)}
+                        className="text-left font-medium text-brand-700 hover:underline"
+                        onClick={() => setViewingInquiry(i)}
                       >
-                        <RotateCcw className="h-3 w-3" />
-                        Restore
+                        {displayContact.companyName}
                       </button>
                     </Td>
-                  ) : null}
-                </tr>
-              ))
+                    <Td>{displayContact.contactName}</Td>
+                    <Td>{i.country}</Td>
+                    <Td className="text-slate-600">{i.customerType}</Td>
+                    <Td className="text-slate-600">{i.product}</Td>
+                    <Td className="text-slate-600">
+                      {i.quantity ? `${i.quantity} ${i.quantityUnit ?? ""}` : "—"}
+                    </Td>
+                    <Td>
+                      <RepCell
+                        inquiry={i}
+                        team={team}
+                        readOnly={readOnly}
+                        open={openId === i.id}
+                        onToggle={() => setOpenId((cur) => (cur === i.id ? null : i.id))}
+                        onAssign={(spId) => assignRep(i.id, spId)}
+                      />
+                    </Td>
+                    <Td>
+                      <span
+                        className={`inline-block rounded border px-1.5 py-0.5 text-[11px] font-medium ${STAGE_COLORS[i.stage]}`}
+                      >
+                        {STAGE_LABELS[i.stage] ?? i.stage}
+                      </span>
+                    </Td>
+                    {archivedView ? (
+                      <Td className="text-xs text-slate-500">
+                        {i.deletedAt ? new Date(i.deletedAt).toLocaleDateString() : "—"}
+                        {i.deletedBy ? <span className="block">by {i.deletedBy}</span> : null}
+                      </Td>
+                    ) : null}
+                    <Td className="text-xs text-slate-500">
+                      {new Date(i.createdAt).toLocaleDateString()}
+                    </Td>
+                    {archivedView ? (
+                      <Td>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+                            onClick={() => restoreInquiry(i.id)}
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            Restore
+                          </button>
+                          {canDelete ? (
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-800 hover:bg-rose-100"
+                              onClick={() => permanentlyDeleteInquiry(i.id)}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                              Delete
+                            </button>
+                          ) : null}
+                        </div>
+                      </Td>
+                    ) : null}
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
@@ -353,6 +385,24 @@ export default function InquiriesTable({
   );
 }
 
+function getDisplayContact(inquiry: Inquiry) {
+  if (inquiry.source !== "IndiaMART") {
+    return {
+      companyName: inquiry.companyName,
+      contactName: inquiry.contactName,
+      city: inquiry.city,
+    };
+  }
+  const cleaned = cleanIndiaMartContactFields(inquiry);
+  return {
+    companyName: cleaned.companyName ?? inquiry.companyName,
+    contactName:
+      cleaned.contactName ??
+      (inquiry.contactName === (cleaned.companyName ?? inquiry.companyName) ? "Unknown" : inquiry.contactName),
+    city: cleaned.city,
+  };
+}
+
 function InquiryViewModal({
   inquiry,
   onClose,
@@ -362,6 +412,8 @@ function InquiryViewModal({
   onClose: () => void;
   onEdit?: () => void;
 }) {
+  const displayContact = getDisplayContact(inquiry);
+  const orderDetails = readIndiaMartOrderDetails(inquiry);
   const sample = readSampleDetails(inquiry.notes);
   const order = readOrderDetails(inquiry.notes);
   const orderStatus = readOrderStatusDetails(inquiry.notes);
@@ -376,9 +428,9 @@ function InquiryViewModal({
             <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-700">
               Inquiry view
             </p>
-            <h2 className="mt-1 text-xl font-semibold text-brand-950">{inquiry.companyName}</h2>
+            <h2 className="mt-1 text-xl font-semibold text-brand-950">{displayContact.companyName}</h2>
             <p className="text-sm text-slate-600">
-              {inquiry.contactName} · {inquiry.phone || "No phone"} · {inquiry.email || "No email"}
+              {displayContact.contactName} · {inquiry.phone || "No phone"} · {inquiry.email || "No email"}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -461,15 +513,15 @@ function InquiryViewModal({
 
           <section className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
             <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
-              Customer information
+              Buyer details
             </h3>
             <dl className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-              <Info label="Contact" value={inquiry.contactName} />
-              <Info label="Company" value={inquiry.companyName} />
+              <Info label="Contact" value={displayContact.contactName} />
+              <Info label="Company" value={displayContact.companyName} />
               <Info label="Phone" value={inquiry.phone || "—"} />
               <Info label="Email" value={inquiry.email || "—"} />
               <Info label="Country" value={inquiry.country} />
-              <Info label="Address / city" value={inquiry.city || "—"} />
+              <Info label="Address / city" value={displayContact.city || "—"} />
               <Info label="Customer type" value={inquiry.customerType} />
               <Info label="Sales rep" value={inquiry.salesPersonName || inquiry.assignedTo || "Unassigned"} />
             </dl>
@@ -477,18 +529,18 @@ function InquiryViewModal({
 
           <section className="rounded-lg border border-slate-200 bg-white p-4">
             <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-600">
-              Product & follow-up
+              Order details
             </h3>
             <dl className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-              <Info label="Product" value={inquiry.product} />
-              <Info
-                label="Quantity"
-                value={inquiry.quantity ? `${inquiry.quantity} ${inquiry.quantityUnit ?? ""}` : "—"}
-              />
-              <Info label="Packaging" value={inquiry.packaging || "—"} />
-              <Info label="Product notes" value={inquiry.productNotes || "—"} />
+              <Info label="Product name" value={orderDetails.productName || "—"} />
+              <Info label="Quantity" value={orderDetails.quantity || "—"} />
+              <Info label="Packaging size" value={orderDetails.packagingSize || "—"} />
+              <Info label="Product form" value={orderDetails.productForm || "—"} />
+              <Info label="Concentration" value={orderDetails.concentration || "—"} />
+              <Info label="Grade" value={orderDetails.grade || "—"} />
+              <Info label="Probable order value" value={orderDetails.probableOrderValue || "—"} />
+              <Info label="Product category" value={inquiry.product} />
               <Info label="Next action" value={inquiry.nextActionNote || "—"} />
-              <Info label="Regulatory notes" value={inquiry.regulatoryNotes || "—"} />
             </dl>
           </section>
 

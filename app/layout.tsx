@@ -93,17 +93,17 @@ function Sidebar({ role }: { role: "Owner" | "SalesRep" }) {
         </div>
       </Link>
       <nav className="mt-2 flex flex-col gap-0.5 px-3">
-        <NavLink href="/" icon={<LayoutGrid className="h-4 w-4" />} label="Pipeline" />
+        <NavLink href="/" icon={<LayoutGrid className="h-4 w-4" />} label="Manual Inquiry" />
+        <NavLink
+          href="/indiamart"
+          icon={<Inbox className="h-4 w-4" />}
+          label="IndiaMART Inquiry"
+        />
         <NavLink href="/inquiries" icon={<List className="h-4 w-4" />} label="All Inquiries" />
         <NavLink
           href="/inquiries/new"
           icon={<PlusCircle className="h-4 w-4" />}
           label="New Inquiry"
-        />
-        <NavLink
-          href="/indiamart"
-          icon={<Inbox className="h-4 w-4" />}
-          label="IndiaMART Leads"
         />
         <NavLink href="/analysis" icon={<BarChart3 className="h-4 w-4" />} label="Analysis" />
         <NavLink href="/email-replies" icon={<MailCheck className="h-4 w-4" />} label="Replied Email" />

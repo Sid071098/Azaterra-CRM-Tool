@@ -118,6 +118,32 @@ export type GmailThreadMessage = {
   };
 };
 
+export type GmailMessageListItem = {
+  id: string;
+  threadId: string;
+};
+
+export type GmailMessagePart = {
+  partId?: string;
+  mimeType?: string;
+  filename?: string;
+  headers?: Array<{ name: string; value: string }>;
+  body?: {
+    size?: number;
+    data?: string;
+  };
+  parts?: GmailMessagePart[];
+};
+
+export type GmailFullMessage = {
+  id: string;
+  threadId: string;
+  labelIds?: string[];
+  snippet?: string;
+  internalDate?: string;
+  payload?: GmailMessagePart;
+};
+
 export async function getGmailThread(accessToken: string, threadId: string) {
   const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}`);
   url.searchParams.set("format", "metadata");
@@ -131,11 +157,56 @@ export async function getGmailThread(accessToken: string, threadId: string) {
   return data as { id: string; messages?: GmailThreadMessage[] };
 }
 
+export async function searchGmailMessages(
+  accessToken: string,
+  query: string,
+  maxResults = 20,
+  pageToken?: string,
+) {
+  const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+  url.searchParams.set("q", query);
+  url.searchParams.set("maxResults", String(maxResults));
+  if (pageToken) url.searchParams.set("pageToken", pageToken);
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error?.message ?? "Could not search Gmail messages.");
+  return data as { messages?: GmailMessageListItem[]; nextPageToken?: string; resultSizeEstimate?: number };
+}
+
+export async function getGmailMessage(accessToken: string, messageId: string) {
+  const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}`);
+  url.searchParams.set("format", "full");
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error?.message ?? "Could not read Gmail message.");
+  return data as GmailFullMessage;
+}
+
 export function getHeader(message: GmailThreadMessage, headerName: string) {
   return (
     message.payload?.headers?.find((header) => header.name.toLowerCase() === headerName.toLowerCase())
       ?.value ?? ""
   );
+}
+
+export function getMessageHeader(message: GmailFullMessage, headerName: string) {
+  return (
+    message.payload?.headers?.find((header) => header.name.toLowerCase() === headerName.toLowerCase())
+      ?.value ?? ""
+  );
+}
+
+export function extractPlainTextFromGmailMessage(message: GmailFullMessage) {
+  const plainParts: string[] = [];
+  const htmlParts: string[] = [];
+  collectBodyParts(message.payload, plainParts, htmlParts);
+
+  const text = plainParts.join("\n").trim() || htmlParts.map(stripHtml).join("\n").trim();
+  return text || message.snippet || "";
 }
 
 export function parseEmailAddress(value: string) {
@@ -200,6 +271,35 @@ function buildMimeMessage({
 
   lines.push(`--${boundary}--`);
   return lines.join("\r\n");
+}
+
+function collectBodyParts(part: GmailMessagePart | undefined, plainParts: string[], htmlParts: string[]) {
+  if (!part) return;
+  const decoded = part.body?.data ? decodeBase64Url(part.body.data) : "";
+  if (decoded && part.mimeType === "text/plain") plainParts.push(decoded);
+  if (decoded && part.mimeType === "text/html") htmlParts.push(decoded);
+  for (const child of part.parts ?? []) collectBodyParts(child, plainParts, htmlParts);
+}
+
+function decodeBase64Url(value: string) {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padding = normalized.length % 4 ? "=".repeat(4 - (normalized.length % 4)) : "";
+  return Buffer.from(`${normalized}${padding}`, "base64").toString("utf8");
+}
+
+function stripHtml(value: string) {
+  return value
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function encodeBase64Url(value: string) {

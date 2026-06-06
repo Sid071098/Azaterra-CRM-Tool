@@ -21,6 +21,8 @@ import { readOrderDetails } from "@/lib/orderDetails";
 import { readOrderStatusDetails } from "@/lib/orderStatusDetails";
 import { readOrderSentDetails } from "@/lib/orderSentDetails";
 import { readSampleDetails } from "@/lib/sampleDetails";
+import { cleanIndiaMartContactFields, formatIndiaMartBuyerIdentity } from "@/lib/indiaContactCleanup";
+import { readIndiaMartOrderDetails } from "@/lib/indiaMartOrderDetails";
 import { ArrowLeft, CheckCircle2, Send, Trash2 } from "lucide-react";
 import Link from "next/link";
 
@@ -219,6 +221,15 @@ export default function InquiryDetail({
   ]
     .filter((card) => card.hasData && card.rank < currentRank)
     .reverse();
+  const cleanedContact =
+    inquiry.source === "IndiaMART"
+      ? getDisplayContact(inquiry)
+      : {
+          companyName: inquiry.companyName,
+          contactName: inquiry.contactName,
+          buyerIdentity: inquiry.companyName,
+          city: inquiry.city,
+        };
 
   async function save() {
     if (stage === "OrderSent" && orderAdvancePaymentRequired && paymentStatus !== "Received") {
@@ -299,10 +310,12 @@ export default function InquiryDetail({
 
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-brand-900">{inquiry.companyName}</h1>
+          <h1 className="text-2xl font-semibold text-brand-900">
+            {inquiry.source === "IndiaMART" ? cleanedContact.buyerIdentity : cleanedContact.companyName}
+          </h1>
           <p className="text-sm text-slate-600">
-            {inquiry.contactName} · {inquiry.country}
-            {inquiry.city ? `, ${inquiry.city}` : ""} · {inquiry.customerType}
+            {inquiry.source === "IndiaMART" ? "IndiaMART buyer" : cleanedContact.contactName} · {inquiry.country}
+            {cleanedContact.city ? `, ${cleanedContact.city}` : ""} · {inquiry.customerType}
           </p>
         </div>
         <div className="flex flex-col items-end gap-1">
@@ -617,7 +630,7 @@ export default function InquiryDetail({
             </Card>
           ) : null}
 
-          <Card title="Customer information">
+          <Card title="Buyer and order details">
             <EditableCustomerForm inquiry={inquiry} returnHref={returnHref} />
           </Card>
 
@@ -945,15 +958,43 @@ function OwnerRequestNotice({ inquiry }: { inquiry: Inquiry }) {
   );
 }
 
+function getDisplayContact(inquiry: Inquiry) {
+  const cleaned = cleanIndiaMartContactFields(inquiry);
+  const companyName = cleaned.companyName ?? inquiry.companyName;
+  const contactName = cleaned.contactName ?? (inquiry.contactName === companyName ? "Unknown" : inquiry.contactName);
+  return {
+    companyName,
+    contactName,
+    buyerIdentity: formatIndiaMartBuyerIdentity({ companyName, contactName }),
+    city: cleaned.city,
+  };
+}
+
 function EditableCustomerForm({ inquiry, returnHref }: { inquiry: Inquiry; returnHref: string }) {
   const router = useRouter();
+  const orderDetails = readIndiaMartOrderDetails(inquiry);
+  const cleanedContact =
+    inquiry.source === "IndiaMART"
+      ? getDisplayContact(inquiry)
+      : {
+          companyName: inquiry.companyName,
+          contactName: inquiry.contactName,
+          city: inquiry.city,
+        };
+  const buyerIdentity =
+    inquiry.source === "IndiaMART"
+      ? formatIndiaMartBuyerIdentity({
+          companyName: cleanedContact.companyName,
+          contactName: cleanedContact.contactName,
+        })
+      : cleanedContact.companyName;
   const [form, setForm] = useState({
-    companyName: inquiry.companyName,
-    contactName: inquiry.contactName,
+    companyName: cleanedContact.companyName ?? inquiry.companyName,
+    contactName: cleanedContact.contactName ?? inquiry.contactName,
     email: inquiry.email ?? "",
     phone: inquiry.phone ?? "",
     country: inquiry.country,
-    city: inquiry.city ?? "",
+    city: cleanedContact.city ?? "",
     customerType: inquiry.customerType,
     source: inquiry.source,
     product: inquiry.product,
@@ -1017,140 +1058,145 @@ function EditableCustomerForm({ inquiry, returnHref }: { inquiry: Inquiry; retur
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <EditField label="Company / farm / shop">
-          <input
-            className="input"
-            value={form.companyName}
-            onChange={(e) => update("companyName", e.target.value)}
-          />
-        </EditField>
-        <EditField label="Contact name">
-          <input
-            className="input"
-            value={form.contactName}
-            onChange={(e) => update("contactName", e.target.value)}
-          />
-        </EditField>
-        <EditField label="Email">
-          <input
-            className="input"
-            type="email"
-            value={form.email}
-            onChange={(e) => update("email", e.target.value)}
-          />
-        </EditField>
-        <EditField label="Phone">
-          <input
-            className="input"
-            value={form.phone}
-            onChange={(e) => update("phone", e.target.value)}
-          />
-        </EditField>
-        <EditField label="Country">
-          <input
-            className="input"
-            value={form.country}
-            onChange={(e) => update("country", e.target.value)}
-          />
-        </EditField>
-        <EditField label="City / region">
-          <input
-            className="input"
-            value={form.city}
-            onChange={(e) => update("city", e.target.value)}
-          />
-        </EditField>
-        <EditField label="Customer type">
-          <input
-            className="input"
-            value={form.customerType}
-            onChange={(e) => update("customerType", e.target.value)}
-          />
-        </EditField>
-        <EditField label="Source">
-          <input
-            className="input"
-            value={form.source}
-            onChange={(e) => update("source", e.target.value)}
-          />
-        </EditField>
-        <EditField label="Product">
-          <input
-            className="input"
-            value={form.product}
-            onChange={(e) => update("product", e.target.value)}
-          />
-        </EditField>
-        <EditField label="Product notes">
-          <input
-            className="input"
-            value={form.productNotes}
-            onChange={(e) => update("productNotes", e.target.value)}
-          />
-        </EditField>
-        <EditField label="Quantity">
-          <input
-            className="input"
-            type="number"
-            min={0}
-            step="any"
-            value={form.quantity}
-            onChange={(e) => update("quantity", e.target.value)}
-          />
-        </EditField>
-        <EditField label="Unit">
-          <input
-            className="input"
-            value={form.quantityUnit}
-            onChange={(e) => update("quantityUnit", e.target.value)}
-          />
-        </EditField>
-        <EditField label="Packaging">
-          <input
-            className="input"
-            value={form.packaging}
-            onChange={(e) => update("packaging", e.target.value)}
-          />
-        </EditField>
-        <EditField label="Estimated value">
-          <input
-            className="input"
-            type="number"
-            min={0}
-            step="any"
-            value={form.estimatedValue}
-            onChange={(e) => update("estimatedValue", e.target.value)}
-          />
-        </EditField>
-        <EditField label="Currency">
-          <input
-            className="input"
-            value={form.currency}
-            onChange={(e) => update("currency", e.target.value)}
-          />
-        </EditField>
-        <EditField label="Expected close">
-          <input
-            className="input"
-            type="date"
-            value={form.expectedCloseAt}
-            onChange={(e) => update("expectedCloseAt", e.target.value)}
-          />
-        </EditField>
+      <div>
+        <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">
+          Buyer details
+        </h3>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {inquiry.source === "IndiaMART" ? (
+            <EditField label="Buyer / company">
+              <input className="input" value={buyerIdentity || form.companyName} readOnly />
+            </EditField>
+          ) : (
+            <>
+              <EditField label="Company / farm / shop">
+                <input
+                  className="input"
+                  value={form.companyName}
+                  onChange={(e) => update("companyName", e.target.value)}
+                />
+              </EditField>
+              <EditField label="Contact name">
+                <input
+                  className="input"
+                  value={form.contactName}
+                  onChange={(e) => update("contactName", e.target.value)}
+                />
+              </EditField>
+            </>
+          )}
+          <EditField label="Email">
+            <input
+              className="input"
+              type="email"
+              value={form.email}
+              onChange={(e) => update("email", e.target.value)}
+            />
+          </EditField>
+          <EditField label="Phone">
+            <input
+              className="input"
+              value={form.phone}
+              onChange={(e) => update("phone", e.target.value)}
+            />
+          </EditField>
+          <EditField label="Country">
+            <input
+              className="input"
+              value={form.country}
+              onChange={(e) => update("country", e.target.value)}
+            />
+          </EditField>
+          <EditField label="City / region">
+            <input
+              className="input"
+              value={form.city}
+              onChange={(e) => update("city", e.target.value)}
+            />
+          </EditField>
+          <EditField label="Customer type">
+            <input
+              className="input"
+              value={form.customerType}
+              onChange={(e) => update("customerType", e.target.value)}
+            />
+          </EditField>
+          <EditField label="Source">
+            <input
+              className="input"
+              value={form.source}
+              onChange={(e) => update("source", e.target.value)}
+            />
+          </EditField>
+        </div>
       </div>
 
-      <EditField label="Regulatory / compliance notes">
-        <textarea
-          className="textarea min-h-[90px]"
-          value={form.regulatoryNotes}
-          onChange={(e) => update("regulatoryNotes", e.target.value)}
-        />
-      </EditField>
+      <div className="border-t border-slate-200 pt-3">
+        <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">
+          Order details
+        </h3>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <EditField label="Product name">
+            <input
+              className="input"
+              value={form.productNotes}
+              onChange={(e) => update("productNotes", e.target.value)}
+            />
+          </EditField>
+          <EditField label="Product category">
+            <input
+              className="input"
+              value={form.product}
+              onChange={(e) => update("product", e.target.value)}
+            />
+          </EditField>
+          <EditField label="Quantity">
+            <input
+              className="input"
+              type="number"
+              min={0}
+              step="any"
+              value={form.quantity}
+              onChange={(e) => update("quantity", e.target.value)}
+            />
+          </EditField>
+          <EditField label="Unit">
+            <input
+              className="input"
+              value={form.quantityUnit}
+              onChange={(e) => update("quantityUnit", e.target.value)}
+            />
+          </EditField>
+          <EditField label="Packaging size">
+            <input
+              className="input"
+              value={form.packaging}
+              onChange={(e) => update("packaging", e.target.value)}
+            />
+          </EditField>
+          <ReadOnlyField label="Product form" value={orderDetails.productForm || "—"} />
+          <ReadOnlyField label="Concentration" value={orderDetails.concentration || "—"} />
+          <ReadOnlyField label="Grade" value={orderDetails.grade || "—"} />
+          <ReadOnlyField label="Probable order value" value={orderDetails.probableOrderValue || "—"} />
+        </div>
+      </div>
 
       <button className="btn-primary w-full" disabled={saving} onClick={saveCustomerInfo}>
         {saving ? "Saving…" : "Save customer information"}
       </button>
+    </div>
+  );
+}
+
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+        {label}
+      </p>
+      <p className="min-h-10 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800">
+        {value}
+      </p>
     </div>
   );
 }

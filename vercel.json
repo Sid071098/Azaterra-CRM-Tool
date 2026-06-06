@@ -3,6 +3,10 @@
     {
       "path": "/api/auth/sync-email-replies-cron",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/auth/sync-indiamart-gmail-cron",
+      "schedule": "15 3 * * *"
     }
   ]
 }

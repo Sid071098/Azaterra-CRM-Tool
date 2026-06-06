@@ -15,6 +15,7 @@ export default async function PipelinePage() {
   const isOwner = session?.role === "Owner";
   const myId = session?.salesPersonId ?? null;
   const mineFilter = !isOwner && myId ? { salesPersonId: myId } : undefined;
+  const manualWhere = { isArchived: false, source: { not: "IndiaMART" } };
 
   const startOfMonth = new Date();
   startOfMonth.setDate(1);
@@ -35,7 +36,7 @@ export default async function PipelinePage() {
     paymentReminders,
   ] = await Promise.all([
     prisma.inquiry.findMany({
-      where: { isArchived: false },
+      where: manualWhere,
       orderBy: { updatedAt: "desc" },
       select: {
         id: true,
@@ -62,24 +63,24 @@ export default async function PipelinePage() {
         packaging: true,
       },
     }),
-    prisma.inquiry.count({ where: { isArchived: false } }),
-    prisma.inquiry.count({ where: { isArchived: false, stage: { notIn: ["Won", "Lost"] } } }),
-    prisma.inquiry.count({ where: { isArchived: false, stage: "Won", updatedAt: { gte: startOfMonth } } }),
+    prisma.inquiry.count({ where: manualWhere }),
+    prisma.inquiry.count({ where: { ...manualWhere, stage: { notIn: ["Won", "Lost"] } } }),
+    prisma.inquiry.count({ where: { ...manualWhere, stage: "Won", updatedAt: { gte: startOfMonth } } }),
     isOwner ? prisma.salesPerson.count({ where: { status: "Active" } }) : Promise.resolve(0),
     mineFilter
-      ? prisma.inquiry.count({ where: { ...mineFilter, isArchived: false, stage: { notIn: ["Won", "Lost"] } } })
+      ? prisma.inquiry.count({ where: { ...manualWhere, ...mineFilter, stage: { notIn: ["Won", "Lost"] } } })
       : Promise.resolve(0),
-    mineFilter ? prisma.inquiry.count({ where: { ...mineFilter, isArchived: false } }) : Promise.resolve(0),
+    mineFilter ? prisma.inquiry.count({ where: { ...manualWhere, ...mineFilter } }) : Promise.resolve(0),
     mineFilter
       ? prisma.inquiry.count({
-          where: { ...mineFilter, isArchived: false, stage: "Won", updatedAt: { gte: startOfMonth } },
+          where: { ...manualWhere, ...mineFilter, stage: "Won", updatedAt: { gte: startOfMonth } },
         })
       : Promise.resolve(0),
     mineFilter
       ? prisma.inquiry.findMany({
           where: {
             ...mineFilter,
-            isArchived: false,
+            ...manualWhere,
             paymentDueAt: { lt: now },
             paymentStatus: { not: "Received" },
             OR: [
@@ -136,7 +137,7 @@ export default async function PipelinePage() {
       {!isOwner ? <PaymentReminders items={reminderItems} /> : null}
       <div className="mb-2 flex items-end justify-between">
         <h2 className="font-display text-sm font-semibold uppercase tracking-[0.12em] text-brand-700">
-          Sales Pipeline
+          Manual Inquiry
         </h2>
         <span className="text-[11px] text-muted">Click a buyer to view or update</span>
       </div>

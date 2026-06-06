@@ -26,8 +26,14 @@ export default async function InquiryDetailPage({
   const session = readSession();
   const canDelete = session?.role === "Owner" || session?.role === "SalesRep";
   const isOwner = session?.role === "Owner";
-  const returnHref = searchParams?.from === "pipeline" ? "/" : "/inquiries";
-  const returnLabel = searchParams?.from === "pipeline" ? "Sales pipeline" : "All inquiries";
+  const returnHref =
+    searchParams?.from === "pipeline" ? "/" : searchParams?.from === "indiamart" ? "/indiamart" : "/inquiries";
+  const returnLabel =
+    searchParams?.from === "pipeline"
+      ? "Manual Inquiry"
+      : searchParams?.from === "indiamart"
+        ? "IndiaMART Inquiry"
+        : "All inquiries";
   return (
     <InquiryDetail
       inquiry={{
